@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Star Catcher</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: #0b1026;
+    color: #e8ecff;
+    font-family: system-ui, -apple-system, sans-serif;
+    user-select: none;
+  }
+  h1 { margin: 12px 0 4px; font-size: 1.6rem; letter-spacing: 1px; }
+  .hud {
+    display: flex;
+    gap: 24px;
+    margin-bottom: 8px;
+    font-size: 1.1rem;
+  }
+  canvas {
+    background: linear-gradient(#141b3d, #0b1026);
+    border: 2px solid #2c3670;
+    border-radius: 8px;
+    max-width: calc(100vw - 32px);
+    touch-action: none;
+  }
+  .help { opacity: 0.7; font-size: 0.9rem; margin: 8px 16px; text-align: center; }
+</style>
+</head>
+<body>
+  <h1>⭐ Star Catcher</h1>
+  <div class="hud">
+    <span>Score: <b id="score">0</b></span>
+    <span>Lives: <b id="lives">❤️❤️❤️</b></span>
+    <span>Best: <b id="best">0</b></span>
+  </div>
+  <canvas id="game" width="480" height="640"></canvas>
+  <p class="help">← → or A / D to move (or drag on touch screens). Catch ⭐, dodge 🪨. Space to start / pause.</p>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+
+const scoreEl = document.getElementById('score');
+const livesEl = document.getElementById('lives');
+const bestEl = document.getElementById('best');
+
+let best = 0;
+try { best = Number(localStorage.getItem('starCatcherBest')) || 0; } catch (e) {}
+bestEl.textContent = best;
+
+const player = { x: W / 2, y: H - 40, w: 70, h: 18, speed: 420 };
+const keys = {};
+let items, score, lives, elapsed, spawnTimer, state; // state: 'ready' | 'playing' | 'paused' | 'over'
+
+function reset() {
+  items = [];
+  score = 0;
+  lives = 3;
+  elapsed = 0;
+  spawnTimer = 0;
+  player.x = W / 2;
+  updateHud();
+}
+
+function updateHud() {
+  scoreEl.textContent = score;
+  livesEl.textContent = '❤️'.repeat(lives) || '💀';
+  bestEl.textContent = best;
+}
+
+function spawn() {
+  const isRock = Math.random() < 0.35 + Math.min(elapsed / 120, 0.25);
+  const speedBoost = 1 + elapsed / 30;
+  items.push({
+    x: 20 + Math.random() * (W - 40),
+    y: -20,
+    r: isRock ? 16 : 13,
+    vy: (140 + Math.random() * 80) * speedBoost,
+    rock: isRock,
+    spin: Math.random() * Math.PI,
+  });
+}
+
+function update(dt) {
+  elapsed += dt;
+
+  // Player movement
+  let dir = 0;
+  if (keys.ArrowLeft || keys.a) dir -= 1;
+  if (keys.ArrowRight || keys.d) dir += 1;
+  player.x += dir * player.speed * dt;
+  player.x = Math.max(player.w / 2, Math.min(W - player.w / 2, player.x));
+
+  // Spawning gets faster over time
+  spawnTimer -= dt;
+  if (spawnTimer <= 0) {
+    spawn();
+    spawnTimer = Math.max(0.25, 0.9 - elapsed / 60);
+  }
+
+  // Move items and check collisions
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i];
+    it.y += it.vy * dt;
+    it.spin += dt * 3;
+
+    const hit =
+      it.y + it.r >= player.y - player.h / 2 &&
+      it.y - it.r <= player.y + player.h / 2 &&
+      it.x >= player.x - player.w / 2 - it.r &&
+      it.x <= player.x + player.w / 2 + it.r;
+
+    if (hit) {
+      items.splice(i, 1);
+      if (it.rock) {
+        lives--;
+        flash = 0.25;
+        if (lives <= 0) gameOver();
+      } else {
+        score++;
+      }
+      updateHud();
+    } else if (it.y - it.r > H) {
+      items.splice(i, 1);
+    }
+  }
+
+  if (flash > 0) flash -= dt;
+}
+
+function gameOver() {
+  state = 'over';
+  if (score > best) {
+    best = score;
+    try { localStorage.setItem('starCatcherBest', best); } catch (e) {}
+  }
+}
+
+let flash = 0;
+
+function drawStar(x, y, r, rot) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(rot);
+  ctx.beginPath();
+  for (let i = 0; i < 10; i++) {
+    const rad = i % 2 === 0 ? r : r * 0.45;
+    const a = (i * Math.PI) / 5 - Math.PI / 2;
+    ctx.lineTo(Math.cos(a) * rad, Math.sin(a) * rad);
+  }
+  ctx.closePath();
+  ctx.fillStyle = '#ffd84a';
+  ctx.shadowColor = '#ffd84a';
+  ctx.shadowBlur = 12;
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawRock(x, y, r, rot) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(rot * 0.3);
+  ctx.beginPath();
+  for (let i = 0; i < 7; i++) {
+    const a = (i / 7) * Math.PI * 2;
+    const rad = r * (0.8 + ((i * 37) % 5) / 20);
+    ctx.lineTo(Math.cos(a) * rad, Math.sin(a) * rad);
+  }
+  ctx.closePath();
+  ctx.fillStyle = '#8a7f76';
+  ctx.strokeStyle = '#4d4540';
+  ctx.lineWidth = 2;
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawCenteredText(lines) {
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#fff';
+  ctx.textAlign = 'center';
+  lines.forEach(([text, size], i) => {
+    ctx.font = `bold ${size}px system-ui, sans-serif`;
+    ctx.fillText(text, W / 2, H / 2 - 30 + i * 44);
+  });
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+
+  if (flash > 0) {
+    ctx.fillStyle = `rgba(255,60,60,${flash})`;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  for (const it of items) {
+    it.rock ? drawRock(it.x, it.y, it.r, it.spin) : drawStar(it.x, it.y, it.r, it.spin);
+  }
+
+  // Basket / paddle
+  ctx.fillStyle = '#5ad1ff';
+  ctx.beginPath();
+  ctx.roundRect(player.x - player.w / 2, player.y - player.h / 2, player.w, player.h, 8);
+  ctx.fill();
+
+  if (state === 'ready') drawCenteredText([['Star Catcher', 40], ['Press Space or tap to start', 20]]);
+  if (state === 'paused') drawCenteredText([['Paused', 40], ['Press Space to resume', 20]]);
+  if (state === 'over') drawCenteredText([['Game Over', 40], [`Score: ${score}`, 24], ['Space or tap to play again', 18]]);
+}
+
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min((now - last) / 1000, 0.05);
+  last = now;
+  if (state === 'playing') update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+function startOrToggle() {
+  if (state === 'ready' || state === 'over') { reset(); state = 'playing'; }
+  else if (state === 'playing') state = 'paused';
+  else if (state === 'paused') state = 'playing';
+}
+
+// Keyboard
+window.addEventListener('keydown', e => {
+  keys[e.key.length === 1 ? e.key.toLowerCase() : e.key] = true;
+  if (e.code === 'Space') { e.preventDefault(); startOrToggle(); }
+});
+window.addEventListener('keyup', e => {
+  keys[e.key.length === 1 ? e.key.toLowerCase() : e.key] = false;
+});
+
+// Mouse / touch drag
+function pointerToX(e) {
+  const rect = canvas.getBoundingClientRect();
+  return (e.clientX - rect.left) * (W / rect.width);
+}
+canvas.addEventListener('pointerdown', e => {
+  if (state !== 'playing') startOrToggle();
+  player.x = pointerToX(e);
+});
+canvas.addEventListener('pointermove', e => {
+  if (state === 'playing' && (e.buttons || e.pointerType === 'touch')) player.x = pointerToX(e);
+});
+
+reset();
+state = 'ready';
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
